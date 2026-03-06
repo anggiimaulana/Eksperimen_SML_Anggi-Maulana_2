@@ -1,0 +1,125 @@
+name: Automated Preprocessing Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "TwitterEmotion_raw/**"
+      - "preprocessing/automate_Anggi-Maulana.py"
+      - ".github/workflows/preprocessing.yml"
+  workflow_dispatch:
+
+jobs:
+  preprocessing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Set up job
+        run: |
+          echo "Preprocessing Pipeline — Anggi Maulana"
+          echo "Trigger  : ${{ github.event_name }}"
+          echo "Branch   : ${{ github.ref_name }}"
+          echo "Commit   : ${{ github.sha }}"
+
+      - name: Run actions/checkout@v3
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.12.7
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12.7"
+
+      - name: Check Env
+        run: |
+          python --version
+          pip --version
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas numpy scikit-learn openpyxl
+
+      - name: Verify dataset files
+        run: |
+          echo "Memeriksa file dataset di TwitterEmotion_raw/..."
+          python -c "
+          import os, sys
+          files = [
+              'TwitterEmotion_raw/EmoTweetID-Human.csv',
+              'TwitterEmotion_raw/Twitter_Emotion_Dataset.csv',
+              'TwitterEmotion_raw/kamus_singkatan.xlsx',
+          ]
+          all_ok = True
+          for f in files:
+              if os.path.exists(f):
+                  size = os.path.getsize(f)
+                  print(f'  ✓ {f} ({size:,} bytes)')
+              else:
+                  print(f'  ✗ TIDAK DITEMUKAN: {f}')
+                  all_ok = False
+          if not all_ok:
+              sys.exit(1)
+          print('Semua file tersedia!')
+          "
+
+      - name: Run preprocessing pipeline
+        run: |
+          echo "Menjalankan automate_Anggi-Maulana.py..."
+          python preprocessing/automate_Anggi-Maulana.py
+
+      - name: Validate output
+        run: |
+          python -c "
+          import pandas as pd, json, os
+
+          out = 'preprocessing/twitter_emotion_preprocessing'
+          files = ['train.csv','val.csv','full.csv','label_encoder.pkl','metadata.json']
+
+          print('Validasi output:')
+          for f in files:
+              path = os.path.join(out, f)
+              assert os.path.exists(path), f'TIDAK ADA: {path}'
+              print(f'  ✓ {f}')
+
+          train = pd.read_csv(f'{out}/train.csv')
+          val   = pd.read_csv(f'{out}/val.csv')
+
+          assert 'clean_tweet' in train.columns
+          assert 'label'       in train.columns
+          assert 'label_id'    in train.columns
+          assert len(train) > 0
+          assert len(val)   > 0
+
+          with open(f'{out}/metadata.json') as f:
+              meta = json.load(f)
+
+          print(f'  Train  : {len(train):,} baris')
+          print(f'  Val    : {len(val):,} baris')
+          print(f'  Labels : {list(meta[\"label_mapping\"].keys())}')
+          print('Semua validasi berhasil!')
+          "
+
+      - name: Commit and push preprocessed dataset
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add preprocessing/twitter_emotion_preprocessing/
+          git diff --staged --quiet && echo "Tidak ada perubahan baru." || (
+            git commit -m "ci: update preprocessed dataset [$(date +'%Y-%m-%d %H:%M:%S')]"
+            git push
+          )
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Complete job
+        if: always()
+        run: |
+          echo "SUMMARY"
+          echo "Status    : ${{ job.status }}"
+          echo "Timestamp : $(date +'%Y-%m-%d %H:%M:%S UTC')"
+          if [ -d "preprocessing/twitter_emotion_preprocessing" ]; then
+            echo "Output files:"
+            ls -lh preprocessing/twitter_emotion_preprocessing/
+          fi
